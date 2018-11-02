@@ -5,9 +5,9 @@ CLI Client/Server chat in go with gRPC transport
 go get github.com/skillcoder/go-chat  
 (make sure you have set GOPATH and GOOS)  
 cd ${GOPATH}/src/github.com/skillcoder/go-chat  
-go get -u github.com/golang/protobuf/protoc-gen-go
-go get github.com/golang/protobuf
-go get google.golang.org/grpc
+go get -u github.com/golang/protobuf/protoc-gen-go  
+go get github.com/golang/protobuf  
+go get google.golang.org/grpc  
 export PATH=$PATH:$GOPATH/bin  
 
 cd server  
