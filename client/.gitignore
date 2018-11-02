@@ -1,0 +1,6 @@
+/glide.lock
+/vendor
+/.local.*
+/config.yml
+/data/*
+/bin/*

@@ -1,0 +1,5 @@
+package: github.com/skillcoder/go-chat/client
+ignore:
+- github.com/skillcoder/go-chat/proto
+- github.com/golang/protobuf
+- google.golang.org/grpc
