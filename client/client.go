@@ -48,8 +48,9 @@ type Client struct {
 	Shutdown *tAtomBool
 	Text     string
 
-	messageMutex sync.RWMutex
-	messages     map[string]string
+	messageConfirmedWg sync.WaitGroup
+	messageMutex       sync.RWMutex
+	messages           map[string]string
 }
 
 // NewClient - Create chat client object
@@ -132,6 +133,21 @@ func (c *Client) stream(ctx context.Context) error {
 	return c.receive(client)
 }
 
+func (c *Client) sendOneMessage(client proto_chat_v1.Chat_MessageStreamClient, msg string) error {
+	if c.Shutdown.Get() {
+		return errors.New("We cant send after shutdown")
+	}
+
+	id := c.addMessage(msg)
+	DebugLogf("Send [%s]: %s", id, msg)
+	if err := client.Send(&proto_chat_v1.StreamRequest{Message: msg, Id: id}); err != nil {
+		c.delMessage(id)
+		return err
+	}
+
+	return nil
+}
+
 func (c *Client) send(client proto_chat_v1.Chat_MessageStreamClient) {
 	c.showPrompt()
 	sl := bufio.NewScanner(os.Stdin)
@@ -143,10 +159,7 @@ func (c *Client) send(client proto_chat_v1.Chat_MessageStreamClient) {
 			DebugLogf("client disconnected")
 		default:
 			if sl.Scan() {
-				var msg = sl.Text()
-				DebugLogf("Send: %s", msg)
-				id := c.addMessage(msg)
-				if err := client.Send(&proto_chat_v1.StreamRequest{Message: msg, Id: id}); err != nil {
+				if err := c.sendOneMessage(client, sl.Text()); err != nil {
 					ErrorLogf("failed to send message: %v", err)
 					return
 				}
@@ -154,6 +167,13 @@ func (c *Client) send(client proto_chat_v1.Chat_MessageStreamClient) {
 				if sl.Err() == nil {
 					DebugLogf("Batch mode, so exit")
 					c.Shutdown.Set(true)
+					DebugLogf("Wait for confirm %d messages", c.countMessage())
+					c.messageConfirmedWg.Wait()
+					if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
+						ErrorLogf("cant terminate our client [pid=%d]: %v", os.Getpid(), err)
+						return
+					}
+
 					return
 				}
 
@@ -165,6 +185,7 @@ func (c *Client) send(client proto_chat_v1.Chat_MessageStreamClient) {
 }
 
 func (c *Client) receive(client proto_chat_v1.Chat_MessageStreamClient) error {
+	defer client.Context().Done()
 	for {
 		res, err := client.Recv()
 		s, ok := status.FromError(err)
@@ -190,18 +211,15 @@ func (c *Client) receive(client proto_chat_v1.Chat_MessageStreamClient) error {
 			c.printStatusMessage(evt.ClientOffline.Username, "offline")
 			c.showPrompt()
 		case *proto_chat_v1.StreamResponse_ClientMessage:
+			DebugLogf("Message: %s", evt.ClientMessage.Message)
 			if c.checkMessage(evt.ClientMessage.Id) {
+				DebugLogf("Confirm messages: %s", evt.ClientMessage.Id)
 				c.delMessage(evt.ClientMessage.Id)
 			} else {
 				c.printMessage(evt.ClientMessage.Username, evt.ClientMessage.Message)
 			}
-			if c.Shutdown.Get() && evt.ClientMessage.Username == c.Username {
-				if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
-					ErrorLogf("cant terminate our client [pid=%d]: %v", os.Getpid(), err)
-					return nil
-				}
-			}
 
+			DebugLogf("current unconfirmed messages: %d", c.countMessage())
 			c.showPrompt()
 		case *proto_chat_v1.StreamResponse_ServerShutdown:
 			DebugLogf("server is shutting down")
@@ -232,6 +250,7 @@ func (c *Client) addMessage(message string) string {
 	c.messageMutex.Lock()
 	c.messages[id] = message
 	c.messageMutex.Unlock()
+	c.messageConfirmedWg.Add(1)
 
 	return id
 }
@@ -247,6 +266,14 @@ func (c *Client) delMessage(id string) {
 	c.messageMutex.Lock()
 	delete(c.messages, id)
 	c.messageMutex.Unlock()
+	c.messageConfirmedWg.Done()
+}
+
+func (c *Client) countMessage() int {
+	c.messageMutex.RLock()
+	count := len(c.messages)
+	c.messageMutex.RUnlock()
+	return count
 }
 
 func (c *Client) showPrompt() {

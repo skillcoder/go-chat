@@ -9,10 +9,10 @@ import (
 	"sync"
 	//	"time"
 
-	"golang.org/x/net/context"
 	"github.com/golang/protobuf/ptypes"
 	"github.com/pkg/errors"
 	"github.com/skillcoder/go-chat/proto"
+	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -112,7 +112,8 @@ func (s *Server) MessageStream(srv proto_chat_v1.Chat_MessageStreamServer) error
 		return status.Error(codes.Unauthenticated, "invalid token")
 	}
 
-	go s.sendBroadcasts(srv, token)
+	stream := s.subscribe(token)
+	go s.sendBroadcasts(srv, stream, token)
 
 	// RECEIVE LOOP
 	for {
@@ -278,8 +279,11 @@ func (s *Server) isClientOnline(username string) (ok bool) {
 	return false
 }
 
-func (s *Server) sendBroadcasts(srv proto_chat_v1.Chat_MessageStreamServer, token string) {
-	stream := s.subscribe(token)
+func (s *Server) sendBroadcasts(
+	srv proto_chat_v1.Chat_MessageStreamServer,
+	stream chan proto_chat_v1.StreamResponse,
+	token string,
+) {
 	defer s.unsubscribe(token)
 	for {
 		select {
